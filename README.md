@@ -9,7 +9,9 @@ The training and testing experiments are conducted using PyTorch 1.8.1 with a si
 - numpy 1.23.4
 - loguru (optional)
 
-Other minor Python modules can be installed by running
+## Train
+
+To train the model on a GPUs, you can use:
 ```bash
-pip install opencv-python einops
+bash scripts/train.sh
 ```
