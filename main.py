@@ -4,53 +4,15 @@ import datetime
 import argparse
 
 # %matplotlib inline
-import sklearn.datasets
 import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
-import sklearn
-import numpy as np
 from loguru import logger
 import matplotlib.pyplot as plt
-# from sklearn.datasets import make_s_curve
 
 from model.diffusion import MLPDiffusion
-
-
-def create_dataset(data_type, res_dirs):
-    """
-    create dataset
-    """
-    if data_type == 's':
-        curve, _ = sklearn.datasets.make_s_curve(10**4, noise=0.03)
-        curve = curve[:, [0, 2]] / 10.0
-    elif data_type == 'o':
-        curve, _ = sklearn.datasets.make_circles(10**4, noise=0.01, factor=0.4)
-        curve = curve / 10.0
-    elif data_type == 'b':
-        curve, _ = sklearn.datasets.make_blobs(10**4, centers=2, cluster_std=[0.5, 0.5])
-        curve = curve / 100.0
-    elif data_type == 'm':
-        curve, _ = sklearn.datasets.make_moons(10**4, noise=0.03)
-        curve = curve / 10.0
-    elif data_type == 'r':
-        curve, _ = sklearn.datasets.make_swiss_roll(10**4, noise=0.1)
-        curve = curve[:, [0, 2]] / 100.0
-    else:
-        raise NotImplementedError
-    # print("shape of moons:", np.shape(data))
-    logger.info(f'shape of data: {np.shape(curve)}')
-    data = curve.T
-
-    fig, ax = plt.subplots()
-    ax.scatter(*data, color='red', edgecolor='white')
-    ax.axis('off')
-    plt.savefig(f'{res_dirs}/dataset.png', dpi=600, bbox_inches='tight')
-
-    dataset = torch.Tensor(curve).float()
-
-    return dataset
+from dataset.point_dataset import PointDataset
 
 
 def diffusion_loss_fn(model, x_0, alphas_bar_sqrt, one_minus_alphas_bar_sqrt, n_steps):
@@ -105,6 +67,9 @@ def p_sample(model, x, t, betas, one_minus_alphas_bar_sqrt):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_type', default='b', type=str, help='dataset type: [s, o, b, m, r]')
+    parser.add_argument('--num_epoch', default=64000, type=int, help='total training epoch')
+    parser.add_argument('--batch_size', default=1024, type=int, help='training batch size')
+    parser.add_argument('--num_steps', default=100, type=int, help='add noise steps')
 
     args = parser.parse_args()
 
@@ -118,16 +83,13 @@ if __name__ == '__main__':
     res_dirs = f'results/{exp_id}'
     os.makedirs(res_dirs, exist_ok=True)
 
-    batch_size = 1024
-    dataset = create_dataset(data_type=args.data_type, res_dirs=res_dirs)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
-    num_epoch = 64000
-    num_steps = 100
+    dataset = PointDataset(data_type=args.data_type, res_dirs=res_dirs)
+    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
 
-    model = MLPDiffusion(num_steps).cuda()
+    model = MLPDiffusion(args.num_steps).cuda()
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
 
-    betas = torch.linspace(-6, 6, num_steps).cuda()
+    betas = torch.linspace(-6, 6, args.num_steps).cuda()
     betas = torch.sigmoid(betas) * (0.5e-2 - 1e-5) + 1e-5
 
     alphas = 1 - betas
@@ -144,9 +106,9 @@ if __name__ == '__main__':
     # print("all the same shape:", betas.shape)
     plt.rc('text', color='blue')
 
-    for t in range(num_epoch):
+    for t in range(args.num_epoch):
         for idx, batch_x in enumerate(dataloader):
-            loss = diffusion_loss_fn(model, batch_x.cuda(), alphas_bar_sqrt, one_minus_alphas_bar_sqrt, num_steps)
+            loss = diffusion_loss_fn(model, batch_x.cuda(), alphas_bar_sqrt, one_minus_alphas_bar_sqrt, args.num_steps)
             optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.)
@@ -155,14 +117,14 @@ if __name__ == '__main__':
         if (t % 100 == 0):
             # print(loss.item())
             logger.info(f'epoch-{t}: {loss.item()}')
-            x_seq = p_sample_loop(model, dataset.shape, num_steps, betas, one_minus_alphas_bar_sqrt)
+            x_seq = p_sample_loop(model, dataset.points.shape, args.num_steps, betas, one_minus_alphas_bar_sqrt)
 
             fig, axs = plt.subplots(1, 10, figsize=(28, 3))
             for i in range(1, 11):
                 cur_x = x_seq[i * 10].detach().cpu()
-                axs[i-1].scatter(cur_x[:, 0], cur_x[:, 1], color='red', edgecolor='white')
-                axs[i-1].set_axis_off()
-                axs[i-1].set_title('$q(\mathbf{x}_{'+str(i*10)+'})$')
+                axs[i - 1].scatter(cur_x[:, 0], cur_x[:, 1], color='red', edgecolor='white')
+                axs[i - 1].set_axis_off()
+                axs[i - 1].set_title(r'$q(\mathbf{x}_{'+str(i*10)+'})$')
 
             plt.savefig(f'{res_dirs}/epoch-{t}.png', dpi=600, bbox_inches='tight')
             plt.close()
